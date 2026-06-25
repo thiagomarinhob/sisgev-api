@@ -97,6 +97,21 @@
 			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
 
+		<!-- BE-14: geometria PostGIS no JPA (coluna location POINT 4326) -->
+		<dependency>
+			<groupId>org.hibernate.orm</groupId>
+			<artifactId>hibernate-spatial</artifactId>
+		</dependency>
+
+		<!-- BE-14: storage de objetos (MinIO / S3-compatível).
+		     8.5.x usa okhttp 4.x (jar JVM); a linha 9.x puxa okhttp 5 (Kotlin Multiplatform)
+		     cujas classes JVM não são resolvidas pelo Maven sem o artefato okhttp-jvm. -->
+		<dependency>
+			<groupId>io.minio</groupId>
+			<artifactId>minio</artifactId>
+			<version>8.5.17</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
