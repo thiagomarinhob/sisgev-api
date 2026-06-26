@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+
 import java.util.Optional;
 import java.util.UUID;
 
@@ -26,4 +27,5 @@ public interface RoadRepository extends JpaRepository<Road, UUID> {
     /** RN-027 (aplicado a roads): comprimento geodésico calculado pela geometria persistida. */
     @Query(value = "SELECT ST_Length(CAST(geometry AS geography)) FROM roads WHERE id = :id", nativeQuery = true)
     BigDecimal calculateLengthMeters(@Param("id") UUID id);
+    Optional<Road> findByIdAndMunicipalityIdAndDeletedAtIsNullAndActiveTrue(UUID id, UUID municipalityId);
 }
