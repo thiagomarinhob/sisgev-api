@@ -1,25 +1,27 @@
-package com.jettch.sisgev.roads.entity;
+package com.jettch.sisgev.roadsegments.entity;
 
+import com.jettch.sisgev.roadsegments.enums.RoadCondition;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.locationtech.jts.geom.MultiLineString;
+import org.locationtech.jts.geom.LineString;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Estrada vicinal. Tabela criada na V1. Entidade mínima para validação de FK pelos trechos.
- * CRUD completo de roads é uma feature separada.
+ * Trecho de estrada vicinal — unidade oficial de cálculo de km (RN-002).
+ * Tabela criada na migration V1. {@code geometry} é LineString PostGIS (SRID 4326).
+ * {@code lengthMeters} é calculado via ST_Length após cada save (RN-027).
  */
 @Entity
-@Table(name = "roads")
+@Table(name = "road_segments")
 @Getter
 @Setter
 @NoArgsConstructor
-public class Road {
+public class RoadSegment {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -28,17 +30,27 @@ public class Road {
     @Column(name = "municipality_id", nullable = false)
     private UUID municipalityId;
 
+    @Column(name = "road_id", nullable = false)
+    private UUID roadId;
+
     @Column(nullable = false, length = 180)
     private String name;
 
-    @Column(columnDefinition = "text")
-    private String description;
+    @Column(name = "segment_order")
+    private Integer segmentOrder;
 
-    @Column(columnDefinition = "geometry(MultiLineString,4326)")
-    private MultiLineString geometry;
+    @Column(columnDefinition = "geometry(LineString,4326)", nullable = false)
+    private LineString geometry;
 
-    @Column(name = "total_length_meters", precision = 12, scale = 2)
-    private BigDecimal totalLengthMeters;
+    @Column(name = "length_meters", nullable = false, precision = 12, scale = 2)
+    private BigDecimal lengthMeters = BigDecimal.ZERO;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "current_condition", nullable = false, length = 30)
+    private RoadCondition currentCondition = RoadCondition.UNKNOWN;
+
+    @Column(name = "last_assessment_at")
+    private LocalDateTime lastAssessmentAt;
 
     @Column(nullable = false)
     private boolean active = true;
