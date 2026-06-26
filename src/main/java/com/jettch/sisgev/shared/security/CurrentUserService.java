@@ -2,6 +2,7 @@ package com.jettch.sisgev.shared.security;
 
 import com.jettch.sisgev.shared.exception.BusinessException;
 import com.jettch.sisgev.users.entity.User;
+import com.jettch.sisgev.users.enums.UserRole;
 import com.jettch.sisgev.users.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -59,5 +60,17 @@ public class CurrentUserService {
         if (!getCurrentUser().isSuperAdmin()) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Ação restrita a SUPER_ADMIN");
         }
+    }
+
+    /**
+     * Exige SUPER_ADMIN ou ADMIN_OPERACIONAL (gestão de usuários/papéis é ação sensível, RN-018).
+     * Caso contrário, 403.
+     */
+    public void assertCanManageUsers() {
+        User user = getCurrentUser();
+        if (user.isSuperAdmin() || user.getRole() == UserRole.ADMIN_OPERACIONAL) {
+            return;
+        }
+        throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Ação restrita a administradores");
     }
 }
