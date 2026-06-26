@@ -47,7 +47,7 @@ public class RoadSegment {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "current_condition", nullable = false, length = 30)
-    private RoadCondition currentCondition = RoadCondition.UNKNOWN;
+    private RoadCondition currentCondition;
 
     @Column(name = "last_assessment_at")
     private LocalDateTime lastAssessmentAt;
