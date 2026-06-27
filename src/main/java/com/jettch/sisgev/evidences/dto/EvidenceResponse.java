@@ -13,12 +13,16 @@ public record EvidenceResponse(
         String status,
         String fileUrl,
         String thumbnailUrl,
+        UUID suggestedRoadSegmentId,
+        UUID confirmedRoadSegmentId,
         BigDecimal latitude,
         BigDecimal longitude,
         BigDecimal gpsAccuracyMeters,
         LocalDateTime takenAt,
         LocalDateTime uploadedAt,
+        LocalDateTime reviewedAt,
         String fieldNote,
+        String adminNote,
         LocalDateTime createdAt
 ) {
     public static EvidenceResponse from(InspectionEvidence e) {
@@ -29,12 +33,16 @@ public record EvidenceResponse(
                 e.getStatus().name(),
                 e.getFileUrl(),
                 e.getThumbnailUrl(),
+                e.getSuggestedRoadSegmentId(),
+                e.getConfirmedRoadSegmentId(),
                 e.getLatitude(),
                 e.getLongitude(),
                 e.getGpsAccuracyMeters(),
                 e.getTakenAt(),
                 e.getUploadedAt(),
+                e.getReviewedAt(),
                 e.getFieldNote(),
+                e.getAdminNote(),
                 e.getCreatedAt()
         );
     }
