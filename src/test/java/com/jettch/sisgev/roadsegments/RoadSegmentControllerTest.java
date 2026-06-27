@@ -1,14 +1,24 @@
 package com.jettch.sisgev.roadsegments;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jettch.sisgev.assessments.dto.AssessmentSummary;
+import com.jettch.sisgev.assessments.service.AssessmentService;
+import com.jettch.sisgev.evidences.dto.EvidenceResponse;
+import com.jettch.sisgev.evidences.service.EvidenceService;
+import com.jettch.sisgev.maintenance.dto.MaintenanceEventSummary;
+import com.jettch.sisgev.maintenance.service.MaintenanceService;
+import com.jettch.sisgev.occurrences.dto.OccurrenceSummary;
+import com.jettch.sisgev.occurrences.service.OccurrenceService;
 import com.jettch.sisgev.roadsegments.controller.RoadSegmentController;
 import com.jettch.sisgev.roadsegments.dto.GeoJsonLineString;
+import com.jettch.sisgev.roadsegments.dto.LengthOverrideRequest;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentCreateRequest;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentResponse;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentUpdateRequest;
 import com.jettch.sisgev.roadsegments.enums.RoadCondition;
 import com.jettch.sisgev.roadsegments.service.RoadSegmentService;
 import com.jettch.sisgev.security.JwtService;
+import com.jettch.sisgev.shared.exception.BusinessException;
 import com.jettch.sisgev.shared.response.PagedResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +31,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -45,6 +56,10 @@ class RoadSegmentControllerTest {
     @MockitoBean RoadSegmentService service;
     @MockitoBean JwtService jwtService;
     @MockitoBean UserDetailsService userDetailsService;
+    @MockitoBean AssessmentService assessmentService;
+    @MockitoBean EvidenceService evidenceService;
+    @MockitoBean OccurrenceService occurrenceService;
+    @MockitoBean MaintenanceService maintenanceService;
 
     private UUID segmentId;
     private UUID roadId;
@@ -62,7 +77,7 @@ class RoadSegmentControllerTest {
         sampleResponse = new RoadSegmentResponse(
                 segmentId, municipalityId, roadId,
                 "Trecho 01", 1, sampleGeo,
-                new BigDecimal("1250.50"), RoadCondition.UNKNOWN,
+                new BigDecimal("1250.50"), null, RoadCondition.UNKNOWN,
                 null, true, false,
                 LocalDateTime.now(), LocalDateTime.now());
     }
@@ -146,7 +161,7 @@ class RoadSegmentControllerTest {
         RoadSegmentResponse updated = new RoadSegmentResponse(
                 segmentId, municipalityId, roadId,
                 "Trecho Atualizado", 2, sampleGeo,
-                new BigDecimal("2500.00"), RoadCondition.UNKNOWN,
+                new BigDecimal("2500.00"), null, RoadCondition.UNKNOWN,
                 null, true, true,
                 LocalDateTime.now(), LocalDateTime.now());
         when(service.update(eq(segmentId), any())).thenReturn(updated);
@@ -184,5 +199,320 @@ class RoadSegmentControllerTest {
     void list_withoutAuthentication_returns401() throws Exception {
         mvc.perform(get("/api/v1/road-segments"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // ---- LEN-01: PATCH /{id}/length retorna 200 com length manual e reason ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void overrideLength_returns200WithManualLengthAndReason() throws Exception {
+        String justification = "GPS trace impreciso na curva leste";
+        RoadSegmentResponse overridden = new RoadSegmentResponse(
+                segmentId, municipalityId, roadId,
+                "Trecho 01", 1, sampleGeo,
+                new BigDecimal("950.00"), justification, RoadCondition.UNKNOWN,
+                null, true, false,
+                LocalDateTime.now(), LocalDateTime.now());
+
+        when(service.overrideLength(eq(segmentId), any())).thenReturn(overridden);
+
+        LengthOverrideRequest req = new LengthOverrideRequest(new BigDecimal("950.00"), justification);
+
+        mvc.perform(patch("/api/v1/road-segments/{id}/length", segmentId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                // LEN-01: HTTP 200
+                .andExpect(status().isOk())
+                // LEN-01: lengthMeters = valor manual
+                .andExpect(jsonPath("$.lengthMeters").value(950.00))
+                // LEN-06: lengthOverrideReason exposto
+                .andExpect(jsonPath("$.lengthOverrideReason").value(justification));
+    }
+
+    // ---- LEN-04: justification ausente/vazia → 400 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void overrideLength_missingJustification_returns400() throws Exception {
+        String bodyWithoutJustification = """
+                {"lengthMeters": 950.00}
+                """;
+
+        mvc.perform(patch("/api/v1/road-segments/{id}/length", segmentId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithoutJustification))
+                // LEN-04: justification obrigatória → 400
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---- LEN-04: justification < 10 chars → 400 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void overrideLength_shortJustification_returns400() throws Exception {
+        LengthOverrideRequest req = new LengthOverrideRequest(new BigDecimal("950.00"), "Curto");
+
+        mvc.perform(patch("/api/v1/road-segments/{id}/length", segmentId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                // LEN-04: justification < 10 chars → 400
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---- LEN-05: justification > 500 chars → 400 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void overrideLength_tooLongJustification_returns400() throws Exception {
+        String tooLong = "A".repeat(501);
+        LengthOverrideRequest req = new LengthOverrideRequest(new BigDecimal("950.00"), tooLong);
+
+        mvc.perform(patch("/api/v1/road-segments/{id}/length", segmentId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                // LEN-05: justification > 500 chars → 400
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---- LEN-02 (controller): não-admin → 403 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void overrideLength_serviceThrowsForbidden_returns403() throws Exception {
+        when(service.overrideLength(eq(segmentId), any()))
+                .thenThrow(new com.jettch.sisgev.shared.exception.BusinessException(
+                        org.springframework.http.HttpStatus.FORBIDDEN, "FORBIDDEN_LENGTH_OVERRIDE",
+                        "Override restrito a admin"));
+
+        LengthOverrideRequest req = new LengthOverrideRequest(new BigDecimal("950.00"), "Justificativa valida aqui");
+
+        mvc.perform(patch("/api/v1/road-segments/{id}/length", segmentId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                // LEN-02: 403 para não-admin
+                .andExpect(status().isForbidden());
+    }
+
+    // ---- LEN-03 (controller): lengthMeters ≤ 0 → 422 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void overrideLength_negativeLength_returns422() throws Exception {
+        when(service.overrideLength(eq(segmentId), any()))
+                .thenThrow(new com.jettch.sisgev.shared.exception.BusinessException(
+                        org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LENGTH",
+                        "length_meters deve ser maior que zero"));
+
+        LengthOverrideRequest req = new LengthOverrideRequest(new BigDecimal("-1.00"), "Justificativa valida aqui");
+
+        mvc.perform(patch("/api/v1/road-segments/{id}/length", segmentId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                // LEN-03: 422 INVALID_LENGTH
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    // ---- LEN-09: PATCH em trecho inexistente → 404 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void overrideLength_nonExistentSegment_returns404() throws Exception {
+        when(service.overrideLength(eq(segmentId), any()))
+                .thenThrow(new com.jettch.sisgev.shared.exception.BusinessException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "SEGMENT_NOT_FOUND", "Trecho não encontrado"));
+
+        LengthOverrideRequest req = new LengthOverrideRequest(new BigDecimal("950.00"), "Justificativa valida aqui");
+
+        mvc.perform(patch("/api/v1/road-segments/{id}/length", segmentId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                // LEN-09: 404
+                .andExpect(status().isNotFound());
+    }
+
+    // ---- SEG-D-04: GET /{id}/history — lista com assessments ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void history_returns200WithItems_whenAssessmentsExist() throws Exception {
+        AssessmentSummary item = new AssessmentSummary(
+                UUID.randomUUID(), RoadCondition.BAD, 75, "MANUAL", null,
+                UUID.randomUUID(), LocalDateTime.now(), null);
+        PagedResponse<AssessmentSummary> page = new PagedResponse<>(List.of(item), 0, 20, 1L, 1);
+        when(assessmentService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/history", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content", hasSize(1)));
+    }
+
+    // ---- SEG-D-05: GET /{id}/history — lista vazia ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void history_returns200WithEmptyList_whenNoAssessments() throws Exception {
+        PagedResponse<AssessmentSummary> page = new PagedResponse<>(List.of(), 0, 20, 0L, 0);
+        when(assessmentService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/history", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content", hasSize(0)));
+    }
+
+    // ---- SEG-D-06: GET /{id}/history — trecho inexistente → 404 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void history_returns404_whenSegmentNotFound() throws Exception {
+        when(assessmentService.listBySegment(any(), any()))
+                .thenThrow(new BusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                        "SEGMENT_NOT_FOUND", "Trecho não encontrado"));
+
+        mvc.perform(get("/api/v1/road-segments/{id}/history", UUID.randomUUID()))
+                .andExpect(status().isNotFound());
+    }
+
+    // ---- SEG-D-08: GET /{id}/evidences — lista com evidências ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void evidences_returns200WithItems_whenEvidencesExist() throws Exception {
+        EvidenceResponse item = new EvidenceResponse(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "UPLOADED", "https://example.com/file.jpg", null,
+                new BigDecimal("-5.1"), new BigDecimal("-39.1"), new BigDecimal("3.0"),
+                LocalDateTime.now(), LocalDateTime.now(), null, LocalDateTime.now());
+        PagedResponse<EvidenceResponse> page = new PagedResponse<>(List.of(item), 0, 20, 1L, 1);
+        when(evidenceService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/evidences", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content", hasSize(1)));
+    }
+
+    // ---- SEG-D-09: GET /{id}/evidences — lista vazia ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void evidences_returns200WithEmptyList_whenNoEvidences() throws Exception {
+        PagedResponse<EvidenceResponse> page = new PagedResponse<>(List.of(), 0, 20, 0L, 0);
+        when(evidenceService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/evidences", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content", hasSize(0)));
+    }
+
+    // ---- SEG-D-10: GET /{id}/evidences — trecho inexistente → 404 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void evidences_returns404_whenSegmentNotFound() throws Exception {
+        when(evidenceService.listBySegment(any(), any()))
+                .thenThrow(new BusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                        "SEGMENT_NOT_FOUND", "Trecho não encontrado"));
+
+        mvc.perform(get("/api/v1/road-segments/{id}/evidences", UUID.randomUUID()))
+                .andExpect(status().isNotFound());
+    }
+
+    // ---- SEG-D-12: GET /{id}/occurrences — lista com ocorrências ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void occurrences_returns200WithItems_whenOccurrencesExist() throws Exception {
+        OccurrenceSummary item = new OccurrenceSummary(
+                UUID.randomUUID(), "POTHOLE", "OPEN", 80,
+                "Buraco na pista", UUID.randomUUID(), LocalDateTime.now(), null, null);
+        PagedResponse<OccurrenceSummary> page = new PagedResponse<>(List.of(item), 0, 20, 1L, 1);
+        when(occurrenceService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/occurrences", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content", hasSize(1)));
+    }
+
+    // ---- SEG-D-13: GET /{id}/occurrences — lista vazia ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void occurrences_returns200WithEmptyList_whenNoOccurrences() throws Exception {
+        PagedResponse<OccurrenceSummary> page = new PagedResponse<>(List.of(), 0, 20, 0L, 0);
+        when(occurrenceService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/occurrences", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content", hasSize(0)));
+    }
+
+    // ---- SEG-D-14: GET /{id}/occurrences — trecho inexistente → 404 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void occurrences_returns404_whenSegmentNotFound() throws Exception {
+        when(occurrenceService.listBySegment(any(), any()))
+                .thenThrow(new BusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                        "SEGMENT_NOT_FOUND", "Trecho não encontrado"));
+
+        mvc.perform(get("/api/v1/road-segments/{id}/occurrences", UUID.randomUUID()))
+                .andExpect(status().isNotFound());
+    }
+
+    // ---- SEG-D-16: GET /{id}/maintenance-events — lista com eventos ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void maintenanceEvents_returns200WithItems_whenEventsExist() throws Exception {
+        MaintenanceEventSummary item = new MaintenanceEventSummary(
+                UUID.randomUUID(), "PATCHING", "PLANNED",
+                LocalDate.now().plusDays(7), null, null,
+                null, null, UUID.randomUUID(), LocalDateTime.now(), null);
+        PagedResponse<MaintenanceEventSummary> page = new PagedResponse<>(List.of(item), 0, 20, 1L, 1);
+        when(maintenanceService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/maintenance-events", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content", hasSize(1)));
+    }
+
+    // ---- SEG-D-17: GET /{id}/maintenance-events — lista vazia ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void maintenanceEvents_returns200WithEmptyList_whenNoEvents() throws Exception {
+        PagedResponse<MaintenanceEventSummary> page = new PagedResponse<>(List.of(), 0, 20, 0L, 0);
+        when(maintenanceService.listBySegment(eq(segmentId), any())).thenReturn(page);
+
+        mvc.perform(get("/api/v1/road-segments/{id}/maintenance-events", segmentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content", hasSize(0)));
+    }
+
+    // ---- SEG-D-18: GET /{id}/maintenance-events — trecho inexistente → 404 ----
+
+    @Test
+    @WithMockUser(roles = "ADMIN_OPERACIONAL")
+    void maintenanceEvents_returns404_whenSegmentNotFound() throws Exception {
+        when(maintenanceService.listBySegment(any(), any()))
+                .thenThrow(new BusinessException(org.springframework.http.HttpStatus.NOT_FOUND,
+                        "SEGMENT_NOT_FOUND", "Trecho não encontrado"));
+
+        mvc.perform(get("/api/v1/road-segments/{id}/maintenance-events", UUID.randomUUID()))
+                .andExpect(status().isNotFound());
     }
 }

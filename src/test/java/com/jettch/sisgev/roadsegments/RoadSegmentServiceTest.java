@@ -3,6 +3,7 @@ package com.jettch.sisgev.roadsegments;
 import com.jettch.sisgev.roads.entity.Road;
 import com.jettch.sisgev.roads.repository.RoadRepository;
 import com.jettch.sisgev.roadsegments.dto.GeoJsonLineString;
+import com.jettch.sisgev.roadsegments.dto.LengthOverrideRequest;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentCreateRequest;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentResponse;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentUpdateRequest;
@@ -249,6 +250,143 @@ class RoadSegmentServiceTest {
         verify(segmentRepo).recalculateLengthMeters(segId);
         // e response usa o valor calculado pelo PostGIS
         assertThat(response.lengthMeters()).isEqualByComparingTo(newLength);
+    }
+
+    // ---- LEN-01: override manual por ADMIN_OPERACIONAL ----
+
+    @Test
+    void overrideLength_adminOperacional_updatesLengthAndReason() {
+        UUID segId = UUID.randomUUID();
+        RoadSegment existing = segmentWith(segId, new BigDecimal("1000.00"), RoadCondition.UNKNOWN);
+        BigDecimal manualLength = new BigDecimal("950.00");
+        String justification = "GPS trace impreciso na curva leste";
+
+        RoadSegment reloaded = segmentWith(segId, manualLength, RoadCondition.UNKNOWN);
+        reloaded.setLengthOverrideReason(justification);
+
+        when(segmentRepo.findByIdAndDeletedAtIsNull(segId))
+                .thenReturn(Optional.of(existing))
+                .thenReturn(Optional.of(reloaded));
+        when(currentUserService.getCurrentUser()).thenReturn(fieldUser);
+
+        RoadSegmentResponse response = service.overrideLength(segId,
+                new LengthOverrideRequest(manualLength, justification));
+
+        // LEN-01: overrideLength chamado com valores corretos
+        verify(segmentRepo).overrideLength(segId, manualLength, justification);
+        // LEN-01: response reflete o valor manual
+        assertThat(response.lengthMeters()).isEqualByComparingTo(manualLength);
+        // LEN-06: response expõe justificativa
+        assertThat(response.lengthOverrideReason()).isEqualTo(justification);
+    }
+
+    // ---- LEN-02: não-admin → 403 ----
+
+    @Test
+    void overrideLength_nonAdminRole_throws403() {
+        UUID segId = UUID.randomUUID();
+        RoadSegment existing = segmentWith(segId, new BigDecimal("500.00"), RoadCondition.UNKNOWN);
+
+        User gestor = new User();
+        gestor.setId(UUID.randomUUID());
+        gestor.setMunicipalityId(municipalityId);
+        gestor.setRole(UserRole.GESTOR_PREFEITURA);
+
+        when(segmentRepo.findByIdAndDeletedAtIsNull(segId)).thenReturn(Optional.of(existing));
+        when(currentUserService.getCurrentUser()).thenReturn(gestor);
+
+        // LEN-02: GESTOR_PREFEITURA → 403 FORBIDDEN_LENGTH_OVERRIDE
+        assertThatThrownBy(() -> service.overrideLength(segId,
+                new LengthOverrideRequest(new BigDecimal("500.00"), "Justificativa valida aqui")))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    // ---- LEN-03: lengthMeters <= 0 (valor negativo explícito no service) → 422 ----
+
+    @Test
+    void overrideLength_negativeLength_throws422() {
+        UUID segId = UUID.randomUUID();
+        RoadSegment existing = segmentWith(segId, new BigDecimal("500.00"), RoadCondition.UNKNOWN);
+
+        when(segmentRepo.findByIdAndDeletedAtIsNull(segId)).thenReturn(Optional.of(existing));
+        when(currentUserService.getCurrentUser()).thenReturn(fieldUser);
+
+        // LEN-03: valor negativo → 422 INVALID_LENGTH
+        assertThatThrownBy(() -> service.overrideLength(segId,
+                new LengthOverrideRequest(new BigDecimal("-1.00"), "Justificativa valida aqui")))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> {
+                    BusinessException ex = (BusinessException) e;
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getCode()).isEqualTo("INVALID_LENGTH");
+                });
+    }
+
+    // ---- LEN-07: update geometry → length_override_reason limpo ----
+
+    @Test
+    void update_afterManualOverride_clearsLengthOverrideReason() {
+        UUID segId = UUID.randomUUID();
+        RoadSegment existing = segmentWith(segId, new BigDecimal("950.00"), RoadCondition.UNKNOWN);
+        existing.setMunicipalityId(municipalityId);
+        existing.setLengthOverrideReason("Ajuste manual anterior");
+        existing.setGeometry(sampleLine);
+
+        // Após PUT com nova geometria, o recarregado deve ter reason = null
+        RoadSegment reloaded = segmentWith(segId, new BigDecimal("2100.00"), RoadCondition.UNKNOWN);
+        reloaded.setMunicipalityId(municipalityId);
+        reloaded.setLengthOverrideReason(null);
+
+        when(segmentRepo.findByIdAndDeletedAtIsNull(segId))
+                .thenReturn(Optional.of(existing))
+                .thenReturn(Optional.of(reloaded));
+        when(segmentRepo.saveAndFlush(any())).thenReturn(existing);
+
+        GeoJsonLineString newGeo = new GeoJsonLineString("LineString",
+                List.of(new double[]{-39.0, -5.0}, new double[]{-39.4, -5.4}));
+
+        RoadSegmentResponse response = service.update(segId,
+                new RoadSegmentUpdateRequest("Trecho X", 1, newGeo, false));
+
+        // LEN-07: recalculate chamado (o qual limpa length_override_reason via SQL)
+        verify(segmentRepo).recalculateLengthMeters(segId);
+        // LEN-07: response reflete reason nulo (auto-calculado)
+        assertThat(response.lengthOverrideReason()).isNull();
+    }
+
+    // ---- LEN-08: override em trecho de outro município → 403 ----
+
+    @Test
+    void overrideLength_differentMunicipality_throws403() {
+        UUID segId = UUID.randomUUID();
+        UUID otherMunicipality = UUID.randomUUID();
+        RoadSegment existing = segmentWith(segId, new BigDecimal("500.00"), RoadCondition.UNKNOWN);
+        existing.setMunicipalityId(otherMunicipality);
+
+        when(segmentRepo.findByIdAndDeletedAtIsNull(segId)).thenReturn(Optional.of(existing));
+        doThrow(new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN_MUNICIPALITY", "Acesso negado ao município"))
+                .when(currentUserService).assertCanAccessMunicipality(otherMunicipality);
+
+        // LEN-08: multi-tenancy → 403
+        assertThatThrownBy(() -> service.overrideLength(segId,
+                new LengthOverrideRequest(new BigDecimal("500.00"), "Justificativa valida aqui")))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    // ---- LEN-09: override em trecho inexistente → 404 ----
+
+    @Test
+    void overrideLength_nonExistentSegment_throws404() {
+        UUID segId = UUID.randomUUID();
+        when(segmentRepo.findByIdAndDeletedAtIsNull(segId)).thenReturn(Optional.empty());
+
+        // LEN-09: trecho inexistente → 404
+        assertThatThrownBy(() -> service.overrideLength(segId,
+                new LengthOverrideRequest(new BigDecimal("500.00"), "Justificativa valida aqui")))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 
     // ---- helpers ----

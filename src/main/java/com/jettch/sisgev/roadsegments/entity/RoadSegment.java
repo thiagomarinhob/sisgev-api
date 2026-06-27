@@ -45,6 +45,9 @@ public class RoadSegment {
     @Column(name = "length_meters", nullable = false, precision = 12, scale = 2)
     private BigDecimal lengthMeters = BigDecimal.ZERO;
 
+    @Column(name = "length_override_reason", length = 500)
+    private String lengthOverrideReason;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "current_condition", nullable = false, length = 30)
     private RoadCondition currentCondition;

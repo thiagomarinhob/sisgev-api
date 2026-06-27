@@ -9,7 +9,10 @@ import com.jettch.sisgev.evidences.repository.InspectionEvidenceRepository;
 import com.jettch.sisgev.evidences.support.ImageThumbnailer;
 import com.jettch.sisgev.inspections.entity.Inspection;
 import com.jettch.sisgev.inspections.repository.InspectionRepository;
+import com.jettch.sisgev.roadsegments.entity.RoadSegment;
+import com.jettch.sisgev.roadsegments.repository.RoadSegmentRepository;
 import com.jettch.sisgev.shared.exception.BusinessException;
+import com.jettch.sisgev.shared.response.PagedResponse;
 import com.jettch.sisgev.shared.security.CurrentUserService;
 import com.jettch.sisgev.storage.StorageService;
 import com.jettch.sisgev.storage.StoredFile;
@@ -20,6 +23,7 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.PrecisionModel;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +33,7 @@ import java.math.BigDecimal;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.UUID;
 
 /**
  * BE-14 — Upload de evidência: salva o binário no storage, gera miniatura e
@@ -43,6 +48,7 @@ public class EvidenceService {
 
     private final InspectionEvidenceRepository evidenceRepository;
     private final InspectionRepository inspectionRepository;
+    private final RoadSegmentRepository segmentRepository;
     private final StorageService storageService;
     private final CurrentUserService currentUser;
 
@@ -106,6 +112,17 @@ public class EvidenceService {
                     .orElseThrow(() -> race);
             return new EvidenceUploadResult(EvidenceResponse.from(winner), false);
         }
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<EvidenceResponse> listBySegment(UUID segmentId, Pageable pageable) {
+        RoadSegment segment = segmentRepository.findByIdAndDeletedAtIsNull(segmentId)
+                .orElseThrow(() -> new BusinessException(
+                        HttpStatus.NOT_FOUND, "SEGMENT_NOT_FOUND", "Trecho não encontrado"));
+        currentUser.assertCanAccessMunicipality(segment.getMunicipalityId());
+        return PagedResponse.from(
+                evidenceRepository.findByConfirmedRoadSegmentIdOrderByTakenAtDesc(segmentId, pageable)
+                        .map(EvidenceResponse::from));
     }
 
     private String uploadThumbnail(String baseKey, byte[] bytes) {

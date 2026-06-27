@@ -1,6 +1,7 @@
 package com.jettch.sisgev.roadsegments.service;
 
 import com.jettch.sisgev.roads.repository.RoadRepository;
+import com.jettch.sisgev.roadsegments.dto.LengthOverrideRequest;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentCreateRequest;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentResponse;
 import com.jettch.sisgev.roadsegments.dto.RoadSegmentUpdateRequest;
@@ -11,6 +12,7 @@ import com.jettch.sisgev.shared.exception.BusinessException;
 import com.jettch.sisgev.shared.response.PagedResponse;
 import com.jettch.sisgev.shared.security.CurrentUserService;
 import com.jettch.sisgev.users.entity.User;
+import com.jettch.sisgev.users.enums.UserRole;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -99,6 +101,27 @@ public class RoadSegmentService {
         repository.recalculateLengthMeters(id); // AC-006 / AC-009: recalcula ao atualizar geometria
 
         return RoadSegmentResponse.from(findActive(id));
+    }
+
+    @Transactional
+    public RoadSegmentResponse overrideLength(UUID id, LengthOverrideRequest req) {
+        RoadSegment segment = findActive(id);
+        currentUser.assertCanAccessMunicipality(segment.getMunicipalityId()); // LEN-08
+
+        User user = currentUser.getCurrentUser();
+        if (user.getRole() != UserRole.SUPER_ADMIN && user.getRole() != UserRole.ADMIN_OPERACIONAL) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN_LENGTH_OVERRIDE",
+                    "Override manual de comprimento restrito a ADMIN_OPERACIONAL ou SUPER_ADMIN");
+        }
+
+        if (req.lengthMeters().signum() <= 0) { // LEN-03
+            throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LENGTH",
+                    "length_meters deve ser maior que zero");
+        }
+
+        repository.overrideLength(id, req.lengthMeters(), req.justification()); // LEN-01
+
+        return RoadSegmentResponse.from(findActive(id)); // LEN-06
     }
 
     @Transactional
