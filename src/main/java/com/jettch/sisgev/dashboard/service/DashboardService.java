@@ -14,14 +14,16 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * BE-19/BE-20 — Indicadores do dashboard. Escopo por município (multi-tenant):
- * usuário comum vê o próprio; SUPER_ADMIN deve informar {@code municipalityId}.
+ * BE-19/BE-20/BE-21 — Indicadores do dashboard. Escopo por município (multi-tenant).
+ * Quando {@code date} é informado, reconstrói a condição válida naquela data (filtro histórico).
  */
 @Service
 @RequiredArgsConstructor
@@ -31,14 +33,14 @@ public class DashboardService {
     private final CurrentUserService currentUser;
 
     @Transactional(readOnly = true)
-    public KmByConditionResponse kmByCondition(UUID municipalityId) {
+    public KmByConditionResponse kmByCondition(UUID municipalityId, LocalDate date) {
         UUID target = resolveMunicipality(municipalityId);
 
-        Map<String, BigDecimal> km = new LinkedHashMap<>();
-        for (RoadCondition condition : RoadCondition.values()) {
-            km.put(condition.name(), BigDecimal.ZERO);
-        }
-        for (DashboardRepository.KmRow row : dashboardRepository.kmByCondition(target)) {
+        Map<String, BigDecimal> km = baseConditionMap();
+        List<DashboardRepository.KmRow> rows = (date != null)
+                ? dashboardRepository.kmByConditionAt(target, endOfDay(date))
+                : dashboardRepository.kmByCondition(target);
+        for (DashboardRepository.KmRow row : rows) {
             km.put(row.getCondition(), scale(row.getKm()));
         }
 
@@ -55,9 +57,12 @@ public class DashboardService {
     }
 
     @Transactional(readOnly = true)
-    public List<MapSegmentResponse> mapSegments(UUID municipalityId) {
+    public List<MapSegmentResponse> mapSegments(UUID municipalityId, LocalDate date) {
         UUID target = resolveMunicipality(municipalityId);
-        return dashboardRepository.mapSegments(target).stream()
+        List<DashboardRepository.MapSegmentRow> rows = (date != null)
+                ? dashboardRepository.mapSegmentsAt(target, endOfDay(date))
+                : dashboardRepository.mapSegments(target);
+        return rows.stream()
                 .map(row -> new MapSegmentResponse(
                         row.getId(),
                         row.getName(),
@@ -66,6 +71,18 @@ public class DashboardService {
                         scale(row.getLengthMeters()),
                         row.getGeojson()))
                 .toList();
+    }
+
+    private Map<String, BigDecimal> baseConditionMap() {
+        Map<String, BigDecimal> km = new LinkedHashMap<>();
+        for (RoadCondition condition : RoadCondition.values()) {
+            km.put(condition.name(), BigDecimal.ZERO);
+        }
+        return km;
+    }
+
+    private java.time.LocalDateTime endOfDay(LocalDate date) {
+        return date.atTime(LocalTime.MAX);
     }
 
     private BigDecimal scale(BigDecimal value) {
