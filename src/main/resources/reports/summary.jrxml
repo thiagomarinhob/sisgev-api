@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="summary" pageWidth="595" pageHeight="842" columnWidth="555"
+              leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+
+    <parameter name="municipality" class="java.lang.String"/>
+    <parameter name="period" class="java.lang.String"/>
+    <parameter name="generatedInfo" class="java.lang.String"/>
+    <parameter name="totalKm" class="java.lang.String"/>
+    <parameter name="repairedKm" class="java.lang.String"/>
+    <parameter name="kmByCondition" class="java.lang.String"/>
+
+    <field name="name" class="java.lang.String"/>
+    <field name="condition" class="java.lang.String"/>
+    <field name="km" class="java.math.BigDecimal"/>
+
+    <title>
+        <band height="186">
+            <staticText>
+                <reportElement x="0" y="0" width="555" height="24"/>
+                <textElement><font size="16" isBold="true"/></textElement>
+                <text><![CDATA[Relatório SGEV — Estradas Vicinais]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="0" y="32" width="555" height="16"/>
+                <textFieldExpression><![CDATA["Município: " + $P{municipality}]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="0" y="50" width="555" height="16"/>
+                <textFieldExpression><![CDATA["Período: " + $P{period}]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="0" y="68" width="555" height="16"/>
+                <textFieldExpression><![CDATA[$P{generatedInfo}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="0" y="96" width="555" height="16"/>
+                <textElement><font isBold="true"/></textElement>
+                <text><![CDATA[Km por condição]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="0" y="114" width="555" height="44"/>
+                <textFieldExpression><![CDATA[$P{kmByCondition}]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="0" y="162" width="555" height="16"/>
+                <textElement><font isBold="true"/></textElement>
+                <textFieldExpression><![CDATA["Total mapeado: " + $P{totalKm} + " km    |    Km recuperados no período: " + $P{repairedKm} + " km"]]></textFieldExpression>
+            </textField>
+        </band>
+    </title>
+
+    <columnHeader>
+        <band height="22">
+            <staticText>
+                <reportElement x="0" y="4" width="300" height="16"/>
+                <textElement><font isBold="true"/></textElement>
+                <text><![CDATA[Trechos críticos]]></text>
+            </staticText>
+            <staticText>
+                <reportElement x="300" y="4" width="150" height="16"/>
+                <textElement><font isBold="true"/></textElement>
+                <text><![CDATA[Condição]]></text>
+            </staticText>
+            <staticText>
+                <reportElement x="450" y="4" width="105" height="16"/>
+                <textElement textAlignment="Right"><font isBold="true"/></textElement>
+                <text><![CDATA[Km]]></text>
+            </staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="16">
+            <textField>
+                <reportElement x="0" y="0" width="300" height="14"/>
+                <textFieldExpression><![CDATA[$F{name}]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="300" y="0" width="150" height="14"/>
+                <textFieldExpression><![CDATA[$F{condition}]]></textFieldExpression>
+            </textField>
+            <textField pattern="#,##0.00">
+                <reportElement x="450" y="0" width="105" height="14"/>
+                <textElement textAlignment="Right"/>
+                <textFieldExpression><![CDATA[$F{km}]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+</jasperReport>
