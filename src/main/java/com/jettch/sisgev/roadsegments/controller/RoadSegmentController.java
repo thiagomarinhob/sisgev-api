@@ -75,6 +75,14 @@ public class RoadSegmentController {
         return assessmentService.listBySegment(id, pageable);
     }
 
+    /** BE-18 — Histórico de avaliações do trecho (ordem decrescente). Alias de /history (RF-ASS-002). */
+    @GetMapping("/{id}/assessments")
+    public PagedResponse<AssessmentSummary> assessments(
+            @PathVariable UUID id,
+            @PageableDefault(size = 20) Pageable pageable) {
+        return assessmentService.listBySegment(id, pageable);
+    }
+
     @GetMapping("/{id}/evidences")
     public PagedResponse<EvidenceResponse> evidences(
             @PathVariable UUID id,
