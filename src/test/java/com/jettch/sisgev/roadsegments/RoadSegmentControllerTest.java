@@ -389,8 +389,10 @@ class RoadSegmentControllerTest {
         EvidenceResponse item = new EvidenceResponse(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
                 "UPLOADED", "https://example.com/file.jpg", null,
+                null, null,
                 new BigDecimal("-5.1"), new BigDecimal("-39.1"), new BigDecimal("3.0"),
-                LocalDateTime.now(), LocalDateTime.now(), null, LocalDateTime.now());
+                LocalDateTime.now(), LocalDateTime.now(), null,
+                null, null, LocalDateTime.now());
         PagedResponse<EvidenceResponse> page = new PagedResponse<>(List.of(item), 0, 20, 1L, 1);
         when(evidenceService.listBySegment(eq(segmentId), any())).thenReturn(page);
 

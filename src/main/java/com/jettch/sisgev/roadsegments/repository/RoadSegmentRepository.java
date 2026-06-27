@@ -33,4 +33,26 @@ public interface RoadSegmentRepository extends JpaRepository<RoadSegment, UUID> 
     void overrideLength(@Param("id") UUID id,
                         @Param("lengthMeters") BigDecimal lengthMeters,
                         @Param("reason") String reason);
+
+    /**
+     * BE-15 — Trecho ativo mais próximo de uma coordenada, dentro de um raio (metros).
+     * Usa ST_DWithin em geography para filtrar pelo raio e o operador <-> para ordenar por proximidade.
+     * Retorna {@code null} se nenhum trecho do município estiver dentro do raio (RN-015, §7.2).
+     */
+    @Query(value = """
+            SELECT id FROM road_segments
+            WHERE municipality_id = :municipalityId
+              AND active = TRUE
+              AND deleted_at IS NULL
+              AND ST_DWithin(
+                    geometry::geography,
+                    ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
+                    :radiusMeters)
+            ORDER BY geometry <-> ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)
+            LIMIT 1
+            """, nativeQuery = true)
+    UUID findNearestSegmentId(@Param("municipalityId") UUID municipalityId,
+                              @Param("longitude") double longitude,
+                              @Param("latitude") double latitude,
+                              @Param("radiusMeters") double radiusMeters);
 }

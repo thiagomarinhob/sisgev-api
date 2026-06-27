@@ -73,4 +73,16 @@ public class CurrentUserService {
         }
         throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Ação restrita a administradores");
     }
+
+    /**
+     * Exige papel de revisor (SUPER_ADMIN ou ADMIN_OPERACIONAL) para revisar evidências
+     * e classificar trechos (BE-16/BE-17). Caso contrário, 403.
+     */
+    public void assertReviewer() {
+        User user = getCurrentUser();
+        if (user.isSuperAdmin() || user.getRole() == UserRole.ADMIN_OPERACIONAL) {
+            return;
+        }
+        throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Ação restrita a administradores");
+    }
 }

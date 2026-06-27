@@ -22,7 +22,9 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.PrecisionModel;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -34,6 +36,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * BE-14 — Upload de evidência: salva o binário no storage, gera miniatura e
@@ -53,6 +56,10 @@ public class EvidenceService {
     private final CurrentUserService currentUser;
 
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), 4326);
+
+    /** Raio (m) para sugerir o trecho mais próximo da foto (BE-15, configurável). */
+    @Value("${geo.near-segment-radius-meters:100}")
+    private double nearSegmentRadiusMeters;
 
     @Transactional
     public EvidenceUploadResult upload(EvidenceUploadCommand cmd) {
@@ -97,6 +104,12 @@ public class EvidenceService {
         evidence.setLatitude(cmd.latitude());
         evidence.setLongitude(cmd.longitude());
         evidence.setLocation(toPoint(cmd.longitude(), cmd.latitude()));
+        // BE-15: sugere o trecho mais próximo (admin confirma depois, RN-015).
+        evidence.setSuggestedRoadSegmentId(segmentRepository.findNearestSegmentId(
+                user.getMunicipalityId(),
+                cmd.longitude().doubleValue(),
+                cmd.latitude().doubleValue(),
+                nearSegmentRadiusMeters));
         evidence.setGpsAccuracyMeters(cmd.gpsAccuracyMeters());
         evidence.setTakenAt(cmd.takenAt());
         evidence.setUploadedAt(LocalDateTime.now());
@@ -123,6 +136,86 @@ public class EvidenceService {
         return PagedResponse.from(
                 evidenceRepository.findByConfirmedRoadSegmentIdOrderByTakenAtDesc(segmentId, pageable)
                         .map(EvidenceResponse::from));
+    }
+
+    // ---------------------------------------------------------------------
+    // BE-16 — Revisão de evidências (approve / reject / mark-duplicated / associate)
+    // ---------------------------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public PagedResponse<EvidenceResponse> list(EvidenceStatus status, Pageable pageable) {
+        User user = currentUser.getCurrentUser();
+        Page<InspectionEvidence> page;
+        if (user.isSuperAdmin()) {
+            page = (status != null)
+                    ? evidenceRepository.findByStatus(status, pageable)
+                    : evidenceRepository.findAll(pageable);
+        } else if (user.getMunicipalityId() != null) {
+            page = (status != null)
+                    ? evidenceRepository.findByMunicipalityIdAndStatus(user.getMunicipalityId(), status, pageable)
+                    : evidenceRepository.findByMunicipalityId(user.getMunicipalityId(), pageable);
+        } else {
+            page = Page.empty(pageable);
+        }
+        return PagedResponse.from(page.map(EvidenceResponse::from));
+    }
+
+    @Transactional(readOnly = true)
+    public EvidenceResponse get(UUID id) {
+        InspectionEvidence evidence = findById(id);
+        currentUser.assertCanAccessMunicipality(evidence.getMunicipalityId());
+        return EvidenceResponse.from(evidence);
+    }
+
+    @Transactional
+    public EvidenceResponse approve(UUID id) {
+        return review(id, e -> e.setStatus(EvidenceStatus.APPROVED));
+    }
+
+    @Transactional
+    public EvidenceResponse reject(UUID id, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Motivo da rejeição é obrigatório");
+        }
+        return review(id, e -> {
+            e.setStatus(EvidenceStatus.REJECTED);
+            e.setAdminNote(reason);
+        });
+    }
+
+    @Transactional
+    public EvidenceResponse markDuplicated(UUID id) {
+        return review(id, e -> e.setStatus(EvidenceStatus.DUPLICATED));
+    }
+
+    @Transactional
+    public EvidenceResponse associateSegment(UUID id, UUID segmentId) {
+        RoadSegment segment = segmentRepository.findByIdAndDeletedAtIsNull(segmentId)
+                .orElseThrow(() -> new BusinessException(
+                        HttpStatus.NOT_FOUND, "SEGMENT_NOT_FOUND", "Trecho não encontrado"));
+        return review(id, e -> {
+            if (!e.getMunicipalityId().equals(segment.getMunicipalityId())) {
+                throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "SEGMENT_OTHER_MUNICIPALITY", "Trecho pertence a outro município");
+            }
+            e.setConfirmedRoadSegmentId(segment.getId());
+        });
+    }
+
+    private EvidenceResponse review(UUID id, Consumer<InspectionEvidence> mutation) {
+        InspectionEvidence evidence = findById(id);
+        currentUser.assertReviewer();
+        currentUser.assertCanAccessMunicipality(evidence.getMunicipalityId());
+        mutation.accept(evidence);
+        evidence.setReviewedAt(LocalDateTime.now());
+        evidence.setReviewedBy(currentUser.getCurrentUser().getId());
+        return EvidenceResponse.from(evidenceRepository.save(evidence));
+    }
+
+    private InspectionEvidence findById(UUID id) {
+        return evidenceRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(
+                        HttpStatus.NOT_FOUND, "EVIDENCE_NOT_FOUND", "Evidência não encontrada"));
     }
 
     private String uploadThumbnail(String baseKey, byte[] bytes) {
